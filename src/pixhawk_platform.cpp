@@ -92,7 +92,8 @@ PixhawkPlatform::PixhawkPlatform(const rclcpp::NodeOptions & options)
     std::bind(&PixhawkPlatform::px4GpsCallback, this, std::placeholders::_1));
 
   px4_battery_sub_ = this->create_subscription<px4_msgs::msg::BatteryStatus>(
-    fmu_prefix + "/fmu/out/battery_status", rclcpp::SensorDataQoS(),
+    fmu_prefix + "/fmu/out/battery_status_v" +
+    std::to_string(px4_msgs::msg::BatteryStatus::MESSAGE_VERSION), rclcpp::SensorDataQoS(),
     std::bind(&PixhawkPlatform::px4BatteryCallback, this, std::placeholders::_1));
 
   px4_odometry_sub_ = this->create_subscription<px4_msgs::msg::VehicleOdometry>(
@@ -110,6 +111,22 @@ PixhawkPlatform::PixhawkPlatform(const rclcpp::NodeOptions & options)
       std::chrono::milliseconds(10), [this]() {this->PX4publishVisualOdometry();});
   }
 
+  // PX4 acknowledgements are authoritative; publishing a command is not acceptance.
+  px4_command_ack_sub_ = this->create_subscription<px4_msgs::msg::VehicleCommandAck>(
+    fmu_prefix + "/fmu/out/vehicle_command_ack_v" +
+    std::to_string(px4_msgs::msg::VehicleCommandAck::MESSAGE_VERSION),
+    rclcpp::SensorDataQoS(),
+    [this](const px4_msgs::msg::VehicleCommandAck::SharedPtr msg) {
+      if (msg->target_system != 1 || msg->target_component != 1) {
+        return;
+      }
+      if (msg->result == px4_msgs::msg::VehicleCommandAck::VEHICLE_CMD_RESULT_ACCEPTED) {
+        RCLCPP_INFO(this->get_logger(), "PX4 accepted command %u", msg->command);
+      } else {
+        RCLCPP_WARN(this->get_logger(), "PX4 command %u result %u", msg->command, msg->result);
+      }
+    });
+
   // declare PX4 publishers
   px4_offboard_control_mode_pub_ = this->create_publisher<px4_msgs::msg::OffboardControlMode>(
     fmu_prefix + "/fmu/in/offboard_control_mode", rclcpp::SensorDataQoS());
@@ -117,7 +134,8 @@ PixhawkPlatform::PixhawkPlatform(const rclcpp::NodeOptions & options)
     fmu_prefix + "/fmu/in/trajectory_setpoint", rclcpp::SensorDataQoS());
   px4_vehicle_attitude_setpoint_pub_ =
     this->create_publisher<px4_msgs::msg::VehicleAttitudeSetpoint>(
-    fmu_prefix + "/fmu/in/vehicle_attitude_setpoint", rclcpp::SensorDataQoS());
+    fmu_prefix + "/fmu/in/vehicle_attitude_setpoint_v" +
+    std::to_string(px4_msgs::msg::VehicleAttitudeSetpoint::MESSAGE_VERSION), rclcpp::SensorDataQoS());
   px4_vehicle_rates_setpoint_pub_ = this->create_publisher<px4_msgs::msg::VehicleRatesSetpoint>(
     fmu_prefix + "/fmu/in/vehicle_rates_setpoint", rclcpp::SensorDataQoS());
   px4_vehicle_command_pub_ = this->create_publisher<px4_msgs::msg::VehicleCommand>(
@@ -170,7 +188,8 @@ bool PixhawkPlatform::ownSetOffboardControl(bool offboard)
   RCLCPP_DEBUG(this->get_logger(), "Switching to OFFBOARD mode");
   // Following PX4 offboard guidelines
   rclcpp::Rate r(100);
-  for (int i = 0; i < 10; i++) {
+  // PX4 requires an OffboardControlMode stream for more than one second.
+  for (int i = 0; i < 120; i++) {
     PX4publishRatesSetpoint();
     r.sleep();
   }
@@ -423,11 +442,8 @@ void PixhawkPlatform::resetTrajectorySetpoint()
 
 void PixhawkPlatform::resetAttitudeSetpoint()
 {
-  px4_attitude_setpoint_.pitch_body = NAN;
-  px4_attitude_setpoint_.roll_body = NAN;
-  px4_attitude_setpoint_.yaw_body = NAN;
-
-  px4_attitude_setpoint_.q_d = std::array<float, 4>{0, 0, 0, 1};
+  // PX4 v1.17 removed the legacy Euler setpoint fields. q_d is ordered w, x, y, z.
+  px4_attitude_setpoint_.q_d = std::array<float, 4>{1, 0, 0, 0};
   px4_attitude_setpoint_.thrust_body = std::array<float, 3>{0, 0, -min_thrust_};
 }
 
@@ -496,8 +512,8 @@ void PixhawkPlatform::PX4publishTrajectorySetpoint()
 {
   // px4_trajectory_setpoint_.timestamp   = timestamp_.load();
   // px4_offboard_control_mode_.timestamp = timestamp_.load();
-  px4_trajectory_setpoint_.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  px4_offboard_control_mode_.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+  px4_trajectory_setpoint_.timestamp = px4_clock_.now().nanoseconds() / 1000;
+  px4_offboard_control_mode_.timestamp = px4_clock_.now().nanoseconds() / 1000;
 
   px4_trajectory_setpoint_pub_->publish(px4_trajectory_setpoint_);
   px4_offboard_control_mode_pub_->publish(px4_offboard_control_mode_);
@@ -510,8 +526,8 @@ void PixhawkPlatform::PX4publishAttitudeSetpoint()
 {
   // px4_attitude_setpoint_.timestamp     = timestamp_.load();
   // px4_offboard_control_mode_.timestamp = timestamp_.load();
-  px4_attitude_setpoint_.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  px4_offboard_control_mode_.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+  px4_attitude_setpoint_.timestamp = px4_clock_.now().nanoseconds() / 1000;
+  px4_offboard_control_mode_.timestamp = px4_clock_.now().nanoseconds() / 1000;
 
   px4_vehicle_attitude_setpoint_pub_->publish(px4_attitude_setpoint_);
   px4_offboard_control_mode_pub_->publish(px4_offboard_control_mode_);
@@ -524,8 +540,8 @@ void PixhawkPlatform::PX4publishRatesSetpoint()
 {
   // px4_rates_setpoint_.timestamp        = timestamp_.load();
   // px4_offboard_control_mode_.timestamp = timestamp_.load();
-  px4_rates_setpoint_.timestamp = this->get_clock()->now().nanoseconds() / 1000;
-  px4_offboard_control_mode_.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+  px4_rates_setpoint_.timestamp = px4_clock_.now().nanoseconds() / 1000;
+  px4_offboard_control_mode_.timestamp = px4_clock_.now().nanoseconds() / 1000;
 
   px4_vehicle_rates_setpoint_pub_->publish(px4_rates_setpoint_);
   px4_offboard_control_mode_pub_->publish(px4_offboard_control_mode_);
@@ -542,7 +558,7 @@ void PixhawkPlatform::PX4publishVehicleCommand(uint16_t command, float param1, f
 {
   px4_msgs::msg::VehicleCommand msg{};
   // msg.timestamp        = timestamp_.load();
-  msg.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+  msg.timestamp = px4_clock_.now().nanoseconds() / 1000;
   msg.param1 = param1;
   msg.param2 = param2;
   msg.command = command;
@@ -597,7 +613,7 @@ void PixhawkPlatform::PX4publishVisualOdometry()
   px4_visual_odometry_msg_.angular_velocity[2] = -odometry_msg_.twist.twist.angular.z;
 
   // px4_visual_odometry_msg_.timestamp = timestamp_.load();
-  px4_visual_odometry_msg_.timestamp = this->get_clock()->now().nanoseconds() / 1000;
+  px4_visual_odometry_msg_.timestamp = px4_clock_.now().nanoseconds() / 1000;
   px4_visual_odometry_pub_->publish(px4_visual_odometry_msg_);
 }
 
@@ -772,9 +788,10 @@ void PixhawkPlatform::px4GpsCallback(const px4_msgs::msg::SensorGps::SharedPtr m
   }
   nav_sat_fix_msg.status.service = sensor_msgs::msg::NavSatStatus::SERVICE_GPS;  // DEFAULT
 
-  nav_sat_fix_msg.latitude = msg->lat;
-  nav_sat_fix_msg.longitude = msg->lon;
-  nav_sat_fix_msg.altitude = msg->alt_ellipsoid;
+  // PX4 v1.17 publishes GPS coordinates directly in degrees and metres.
+  nav_sat_fix_msg.latitude = msg->latitude_deg;
+  nav_sat_fix_msg.longitude = msg->longitude_deg;
+  nav_sat_fix_msg.altitude = msg->altitude_ellipsoid_m;
 
   if (!std::isnan(msg->eph) && !std::isnan(msg->epv)) {
     // Position uncertainty --> Diagonal known
@@ -789,10 +806,6 @@ void PixhawkPlatform::px4GpsCallback(const px4_msgs::msg::SensorGps::SharedPtr m
     nav_sat_fix_msg.position_covariance = {-1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
     nav_sat_fix_msg.position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
   }
-  nav_sat_fix_msg.latitude = nav_sat_fix_msg.latitude / 1e7;
-  nav_sat_fix_msg.longitude = nav_sat_fix_msg.longitude / 1e7;
-  nav_sat_fix_msg.altitude = nav_sat_fix_msg.altitude / 1e3;
-
   gps_sensor_ptr_->updateData(nav_sat_fix_msg);
 }
 
@@ -807,9 +820,10 @@ void PixhawkPlatform::px4BatteryCallback(const px4_msgs::msg::BatteryStatus::Sha
   battery_msg.temperature = msg->temperature;
   battery_msg.current = msg->current_a;
   battery_msg.charge = NAN;
-  battery_msg.capacity = msg->capacity;
-  battery_msg.design_capacity = msg->design_capacity;
-  battery_msg.percentage = 100.0 * msg->remaining;
+  // PX4 reports capacity in mAh while sensor_msgs/BatteryState expects Ah.
+  battery_msg.capacity = static_cast<float>(msg->capacity) / 1000.0f;
+  battery_msg.design_capacity = battery_msg.capacity;
+  battery_msg.percentage = msg->remaining;
   // TODO(miferco97): config file with battery settings
   battery_msg.power_supply_status = sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_UNKNOWN;
   battery_msg.power_supply_health = sensor_msgs::msg::BatteryState::POWER_SUPPLY_HEALTH_UNKNOWN;
@@ -820,9 +834,10 @@ void PixhawkPlatform::px4BatteryCallback(const px4_msgs::msg::BatteryStatus::Sha
   battery_msg.cell_voltage = {};
   battery_msg.cell_temperature = {};
   battery_msg.location = '0';
-  battery_msg.serial_number = std::to_string(msg->serial_number);
+  // PX4 v1.17 replaced serial_number with the stable battery instance id.
+  battery_msg.serial_number = std::to_string(msg->id);
 
-  if (msg->warning >= 0) {
+  if (msg->warning > 0) {
     RCLCPP_WARN_ONCE(this->get_logger(), "Battery warning #%d", msg->warning);
   }
 

@@ -54,6 +54,7 @@
 #include <px4_msgs/msg/trajectory_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_attitude_setpoint.hpp>
 #include <px4_msgs/msg/vehicle_command.hpp>
+#include <px4_msgs/msg/vehicle_command_ack.hpp>
 #include <px4_msgs/msg/vehicle_control_mode.hpp>
 #include <px4_msgs/msg/vehicle_odometry.hpp>
 #include <px4_msgs/msg/vehicle_rates_setpoint.hpp>
@@ -190,6 +191,7 @@ private:
 
   // PX4 subscribers
   rclcpp::Subscription<px4_msgs::msg::SensorCombined>::SharedPtr px4_imu_sub_;
+  rclcpp::Subscription<px4_msgs::msg::VehicleCommandAck>::SharedPtr px4_command_ack_sub_;
   rclcpp::Subscription<px4_msgs::msg::VehicleOdometry>::SharedPtr px4_odometry_sub_;
   rclcpp::Subscription<px4_msgs::msg::VehicleControlMode>::SharedPtr px4_vehicle_control_mode_sub_;
   rclcpp::Subscription<px4_msgs::msg::TimesyncStatus>::SharedPtr px4_timesync_sub_;
@@ -251,6 +253,8 @@ private:
   bool set_disarm_ = false;
   nav_msgs::msg::Odometry odometry_msg_;
 
+  // XRCE-DDS maps the Agent OS clock to PX4 time; ROS /clock is for AS2 data.
+  rclcpp::Clock px4_clock_{RCL_SYSTEM_TIME};
   std::atomic<uint64_t> timestamp_;
 
   px4_msgs::msg::OffboardControlMode px4_offboard_control_mode_;

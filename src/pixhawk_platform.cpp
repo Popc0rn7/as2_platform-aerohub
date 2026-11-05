@@ -38,6 +38,7 @@
  */
 
 #include "pixhawk_platform.hpp"
+#include "as2_core/utils/trajectory_reference.hpp"
 
 namespace as2_platform_pixhawk
 {
@@ -214,6 +215,7 @@ bool PixhawkPlatform::ownSetPlatformControlMode(const as2_msgs::msg::ControlMode
   p ,q ,r  + T(tx,ty,tz) in multicopters tz = -Collective_Thrust */
 
   switch (msg.control_mode) {
+    case as2_msgs::msg::ControlMode::TRAJECTORY:
     case as2_msgs::msg::ControlMode::POSITION: {
         px4_offboard_control_mode_.position = true;
         RCLCPP_INFO(this->get_logger(), "POSITION_MODE ENABLED");
@@ -277,7 +279,8 @@ void PixhawkPlatform::sendCommand()
     return;
   }
 
-  ownSendCommand();
+  // Apply the base latest-reference, mode-transition and source-age guards.
+  as2::AerialPlatform::sendCommand();
   return;
 }
 
@@ -287,6 +290,18 @@ bool PixhawkPlatform::ownSendCommand()
 
   // Switch case to set setpoint
   switch (platform_control_mode.control_mode) {
+    case as2_msgs::msg::ControlMode::TRAJECTORY: {
+        if (platform_control_mode.yaw_mode != as2_msgs::msg::ControlMode::YAW_ANGLE ||
+          command_trajectory_msg_.header.frame_id != odom_frame_id_ ||
+          !as2::trajectory::valid(command_trajectory_msg_)) {return false;}
+        const auto & point = command_trajectory_msg_.setpoints.front();
+        this->resetTrajectorySetpoint();
+        // Direct component mapping preserves all-NaN optional derivatives.
+        px4_trajectory_setpoint_.position = as2::trajectory::enuToNed(point.position);
+        px4_trajectory_setpoint_.velocity = as2::trajectory::enuToNed(point.twist);
+        px4_trajectory_setpoint_.acceleration = as2::trajectory::enuToNed(point.acceleration);
+        px4_trajectory_setpoint_.yaw = std::remainder(M_PI_2 - point.yaw_angle, 2.0 * M_PI);
+      } break;
     case as2_msgs::msg::ControlMode::POSITION: {
         this->resetTrajectorySetpoint();
         if (platform_control_mode.yaw_mode == as2_msgs::msg::ControlMode::YAW_ANGLE) {

@@ -46,5 +46,5 @@ available_modes:
   # - 0b01010100 # SPEED_IN_A_PLANE with yaw SPEED
   # - 0b01100000 # POSITION with yaw ANGLE
   # - 0b01100100 # POSITION with yaw SPEED
-  # - 0b01110000 # TRAJECTORY with yaw ANGLE
+  - 0b01110000 # TRAJECTORY with yaw ANGLE
   # - 0b01110100 # TRAJECTORY with yaw SPEED

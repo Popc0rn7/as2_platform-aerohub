@@ -39,3 +39,5 @@ if(BENCHMARK_SOURCE)
     target_link_libraries(${PROJECT_NAME}_${BENCHMARK_NAME} ${PROJECT_NAME} benchmark::benchmark)
   endforeach()
 endif()
+# Exercise the actual platform class without a flight controller connection.
+add_test(NAME body_rates_pairing COMMAND ${PROJECT_NAME}_body_rates_pairing_test)

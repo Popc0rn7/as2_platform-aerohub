@@ -137,7 +137,8 @@ PixhawkPlatform::PixhawkPlatform(const rclcpp::NodeOptions & options)
   px4_vehicle_attitude_setpoint_pub_ =
     this->create_publisher<px4_msgs::msg::VehicleAttitudeSetpoint>(
     fmu_prefix + "/fmu/in/vehicle_attitude_setpoint_v" +
-    std::to_string(px4_msgs::msg::VehicleAttitudeSetpoint::MESSAGE_VERSION), rclcpp::SensorDataQoS());
+    std::to_string(px4_msgs::msg::VehicleAttitudeSetpoint::MESSAGE_VERSION),
+    rclcpp::SensorDataQoS());
   px4_vehicle_rates_setpoint_pub_ = this->create_publisher<px4_msgs::msg::VehicleRatesSetpoint>(
     fmu_prefix + "/fmu/in/vehicle_rates_setpoint", rclcpp::SensorDataQoS());
   px4_vehicle_command_pub_ = this->create_publisher<px4_msgs::msg::VehicleCommand>(
@@ -394,7 +395,7 @@ bool PixhawkPlatform::ownSendCommand()
         // Publish only one complete fresh sample, never adjacent controls.
         const double max_age = this->getParameter<double>("body_rates.max_age", 0.1);
         const double age = (this->now() - rclcpp::Time(
-          command_twist_msg_.header.stamp, this->get_clock()->get_clock_type())).seconds();
+            command_twist_msg_.header.stamp, this->get_clock()->get_clock_type())).seconds();
         if (command_twist_msg_.header.stamp != command_thrust_msg_.header.stamp ||
           command_twist_msg_.header.frame_id != base_link_frame_id_ ||
           command_thrust_msg_.header.frame_id != base_link_frame_id_ ||
